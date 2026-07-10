@@ -5,22 +5,27 @@ import { motion, AnimatePresence } from "framer-motion"
 import { X, CheckCircle2, AlertCircle, Loader2 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { useWallet } from "@/context/WalletContext"
+import { buildContributeTx, getTokenDecimals, signAndSubmit, toBaseUnits } from "@/lib/soroban"
+import type { CampaignSummary } from "@/types/campaign"
 
 interface PledgeModalProps {
   isOpen: boolean
   onClose: () => void
-  campaignTitle: string
+  campaign: CampaignSummary | null
 }
 
 type TxState = "idle" | "processing" | "success" | "error"
 
-export function PledgeModal({ isOpen, onClose, campaignTitle }: PledgeModalProps) {
+export function PledgeModal({ isOpen, onClose, campaign }: PledgeModalProps) {
   const { address, connect } = useWallet()
   const [pledgeAmount, setPledgeAmount] = useState<string>("100")
   const [txState, setTxState] = useState<TxState>("idle")
   const [errorMessage, setErrorMessage] = useState<string>("")
+  const [txHash, setTxHash] = useState<string>("")
 
   const handlePledge = async () => {
+    if (!campaign) return
+
     if (!address) {
       await connect()
       return
@@ -35,21 +40,27 @@ export function PledgeModal({ isOpen, onClose, campaignTitle }: PledgeModalProps
     setTxState("processing")
 
     try {
-      // Simulate Freighter transaction signing delay
-      await new Promise((resolve) => setTimeout(resolve, 2500))
+      const decimals = await getTokenDecimals(campaign.token)
+      const amountBaseUnits = toBaseUnits(pledgeAmount, decimals)
 
-      // Placeholder for actual simulated success
-      setTxState("success")
-      
-      // Reset state and close modal after success
-      setTimeout(() => {
-        setTxState("idle")
-        onClose()
-      }, 3000)
+      const tx = await buildContributeTx(campaign.id, address, amountBaseUnits)
+      const result = await signAndSubmit(tx, address)
+
+      if (result.status === "SUCCESS") {
+        setTxHash(result.hash)
+        setTxState("success")
+        setTimeout(() => {
+          setTxState("idle")
+          onClose()
+        }, 4000)
+      } else {
+        setTxState("error")
+        setErrorMessage(result.message)
+      }
     } catch (err) {
       setTxState("error")
-      const errorMessage = err instanceof Error ? err.message : String(err)
-      setErrorMessage(errorMessage || "Transaction failed or rejected.")
+      const message = err instanceof Error ? err.message : String(err)
+      setErrorMessage(message || "Transaction failed or rejected.")
     }
   }
 
@@ -61,7 +72,7 @@ export function PledgeModal({ isOpen, onClose, campaignTitle }: PledgeModalProps
 
   return (
     <AnimatePresence>
-      {isOpen && (
+      {isOpen && campaign && (
         <React.Fragment>
           {/* Backdrop */}
           <motion.div
@@ -105,8 +116,18 @@ export function PledgeModal({ isOpen, onClose, campaignTitle }: PledgeModalProps
                   </motion.div>
                   <h3 className="text-2xl font-bold mb-2">Pledge Successful!</h3>
                   <p className="text-foreground/70">
-                    You have successfully pledged to {campaignTitle}.
+                    You have successfully pledged to {campaign.title}.
                   </p>
+                  {txHash && (
+                    <a
+                      href={`https://stellar.expert/explorer/testnet/tx/${txHash}`}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="text-xs text-primary underline mt-3"
+                    >
+                      View transaction
+                    </a>
+                  )}
                 </div>
               ) : txState === "error" ? (
                 <div className="flex flex-col items-center py-8 text-center">
@@ -126,11 +147,11 @@ export function PledgeModal({ isOpen, onClose, campaignTitle }: PledgeModalProps
               ) : (
                 <div className="flex flex-col gap-4">
                   <p className="text-sm text-foreground/70">
-                    You are pledging to <span className="font-semibold text-foreground">{campaignTitle}</span>.
+                    You are pledging to <span className="font-semibold text-foreground">{campaign.title}</span>.
                   </p>
-                  
+
                   <div className="space-y-2">
-                    <label className="text-sm font-medium">Amount to Pledge (XLM)</label>
+                    <label className="text-sm font-medium">Amount to Pledge</label>
                     <div className="relative">
                       <input
                         type="number"
@@ -141,9 +162,6 @@ export function PledgeModal({ isOpen, onClose, campaignTitle }: PledgeModalProps
                         min="1"
                         disabled={txState === "processing"}
                       />
-                      <div className="absolute right-4 top-1/2 -translate-y-1/2 font-bold text-foreground/50">
-                        XLM
-                      </div>
                     </div>
                   </div>
 
